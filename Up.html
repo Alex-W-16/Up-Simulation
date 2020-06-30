@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+
+<html>
+
+<body onLoad="drawGraph()" style="font-family:sans-serif; font-size:15px; width:600px; 
+    margin-left:auto; margin-right:auto; ">
+
+
+  <div style="width:600px; margin-left:auto; margin-right:auto;">
+	
+	<canvas id="trailCanvas" width="600" height="600" style="position:absolute;">
+  Canvas not supported; please update your browser. May be incompatible with some browsers though works with Chrome.
+	</canvas>
+	<canvas id="graphCanvas" width="600" height="600" style="position:absolute;">
+  Canvas not supported; please update your browser. May be incompatible with some browsers though works with Chrome.
+	</canvas>
+	<canvas id="theCanvas" width="600" height="600" style="position:relative;">
+  Canvas not supported; please update your browser. May be incompatible with some browsers though works with Chrome.
+	</canvas>
+	
+  </div>
+  
+  <div style="text-align:center;">
+	<input type="button" value="Start" onclick="releaseHouse();">
+	<input type="button" value="Clear" onclick="clearTrails();">
+  </div>
+  <div style="text-align:center; font-weight:bold;">
+  Initial height = <span id="heightReadout">0</span> m
+	<input type="range" id="heightSlider" min="0" step="100" value="0" oninput="showHeight();" onchange="showHeight();">
+  </div>
+  <div style="text-align:center; font-weight:bold;">
+  Number of Balloons = <span  id="NReadout">100000</span> 
+	<input type="range" id="NSlider" min="100000" step="100000" value="0" oninput="showN();" onchange="showN();">
+  </div>
+  <div style="text-align:center; font-weight:bold;">
+  Mass of House = <span  id="massReadout">6000</span> kg
+	<input type="range" id="massSlider" min="6000" step="1000" value="0" oninput="showMass();" onchange="showMass();">
+  </div>
+  <div style="text-align:center; margin-top:10px"> Helium Density = <span style="font-weight:bold" id="heliumDensity"></span> g/L</div>
+  <div style="text-align:center;">Air Density = <span style="font-weight:bold" id="airDensity"></span> g/L</div>
+  <div style="text-align:center;">Vertical Velocity = <span style="font-weight:bold" id="vy"></span> m/s</div>
+  <div style="text-align:center;">Vertical Acceleration = <span style="font-weight:bold" id="ay"></span> m/s^2</div>
+  <div style="text-align:center;">Bouyancy Force = <span style="font-weight:bold" id="bouyancyForce"></span> N</div>
+  <div style="text-align:center;">Magnitude of Drag Force = <span style="font-weight:bold" id="dragForce"></span> N</div>
+  </div>
+  
+  
+  <script>
+	var theCanvas = document.getElementById("theCanvas");   // for drawing the projectile
+    var theContext = theCanvas.getContext("2d");
+    var trailCanvas = document.getElementById("trailCanvas");   // for drawing trails
+    var trailContext = trailCanvas.getContext("2d");
+	var graphCanvas = document.getElementById("graphCanvas");   // for drawing the graph
+    var graphContext = graphCanvas.getContext("2d");
+	var heightSlider = document.getElementById("heightSlider");
+	var NSlider = document.getElementById("NSlider");
+	var massSlider = document.getElementById("massSlider");
+	var heliumDensity  // density of helium at 20 deg C and 1 atm, g/L
+	var airDensity, Temp, balloonVolumeNew, balloonRadiusNew, dragForce, weight, bouyancyForce; 
+	var slidermaxheight = 20000;
+	var slidermaxN = 5000000;
+	var slidermaxmass = 100000;
+	var buffergraph = 50
+	document.getElementById("heightSlider").max = slidermaxheight;
+	document.getElementById("NSlider").max = slidermaxN;
+	document.getElementById("massSlider").max = slidermaxmass;
+	var y, vy, t, houseMass, numberBalloons, dragForce, ay;
+	var run_time = 10; //time taken for the simulation to run
+	var final_time = 300; //time at end of simulation /seconds
+	var dt = final_time / (run_time * 30);
+	var timer;
+	var heightReadout = document.getElementById("heightReadout");
+	
+	document.getElementById("heliumDensity").innerHTML = "-";
+	document.getElementById("airDensity").innerHTML = "-";
+	document.getElementById("vy").innerHTML = "-";
+	document.getElementById("ay").innerHTML = "-";
+	document.getElementById("bouyancyForce").innerHTML = "-";
+	document.getElementById("dragForce").innerHTML = "-";
+	
+		function showHeight() {
+		heightReadout.innerHTML = heightSlider.value;
+		}
+	
+	var NReadout = document.getElementById("NReadout");
+	
+		function showN() {
+		NReadout.innerHTML = NSlider.value;
+		}
+		
+	var heightReadout = document.getElementById("heightReadout");
+	
+		function showMass() {
+		massReadout.innerHTML = massSlider.value;
+		}
+	
+	moveHouse()
+	window.onload = drawGraph();
+
+        function moveHouse() {
+           
+			var gravityG = 9.81;  
+			var balloonRadius = 0.15; //radius of balloon in metres
+            var balloonVolume = 4/3 * Math.PI * Math.pow(balloonRadius, 3) * 1000; // volume of balloon in litres at 0 metres
+			var P0 = 101.325 * Math.pow(10,3); //Sea level standard pressure (ref: https://en.wikipedia.org/wiki/Density_of_air )
+			var T0 = 288.15; // Sea level standard temperature (ref: https://en.wikipedia.org/wiki/Density_of_air )
+			var L = 0.0065; // Temperature Lapse rate (ref: https://en.wikipedia.org/wiki/Density_of_air )
+			var R = 8.31447; // gas constant (ref: http://www.engineeringtoolbox.com/physical-constants-SI-d_1662.html )
+			var M = 0.0289644; // molar mass of air (ref: https://en.wikipedia.org/wiki/Density_of_air )
+			var Na = 6.022 * Math.pow(10,23); //avagadro number (ref: http://www.engineeringtoolbox.com/physical-constants-SI-d_1662.html )
+			var kb = 1.381 * Math.pow(10,-23); //boltzman constant (ref: http://www.engineeringtoolbox.com/physical-constants-SI-d_1662.html )
+			var MrHelium = 4 //helium molar mass
+			var n = balloonVolume/24 //moles per balloon
+			var Cd = 0.5 //drag coefficient for a sphere (ref: http://www.engineeringtoolbox.com/drag-coefficient-d_627.html )
+			
+			
+            if (y >= 0) {
+                airDensity = ((M*P0)/(R*(T0 - L*y))) * Math.pow((1 - (L * y)/T0), ((gravityG * M)/(R * L))); //(ref: https://en.wikipedia.org/wiki/Density_of_air )
+				heliumDensity = ((MrHelium / Na)* (P0) /(kb*(T0 - (L*y)))) * Math.exp((-(MrHelium / Na) * gravityG * y * (1/1000))/(kb * (T0- (L*y)))) * (1/1000); //(ref: https://en.wikipedia.org/wiki/Vertical_pressure_variation )
+				totalBalloonVolumeNew = ((n * MrHelium) / heliumDensity)*numberBalloons;
+				totalBalloonRadiusNew = Math.pow(((3*totalBalloonVolumeNew)/(4*Math.PI)), (1/3));
+				dragForce = 0.5 * Cd * Math.PI * Math.pow(totalBalloonRadiusNew, 2) * airDensity * Math.pow(vy,2); //(ref: http://www.engineeringtoolbox.com/drag-coefficient-d_627.html)
+				bouyancyForce = gravityG * Math.abs(airDensity - heliumDensity) * totalBalloonVolumeNew;
+				weight = houseMass * gravityG;
+				if (vy >= 0) {
+				ay = (bouyancyForce - dragForce - weight)/houseMass;
+				} else {
+				ay = (bouyancyForce + dragForce - weight)/houseMass;
+				}
+				vy += ay * dt;
+                var lasty = y;
+                t += dt;
+                y += vy * dt;
+                drawHouse();
+				
+				document.getElementById("heliumDensity").innerHTML = heliumDensity.toPrecision(2);
+				document.getElementById("airDensity").innerHTML = airDensity.toFixed(2);
+				document.getElementById("vy").innerHTML = vy.toPrecision(3);
+				document.getElementById("ay").innerHTML = ay.toPrecision(3);
+				document.getElementById("bouyancyForce").innerHTML = bouyancyForce.toPrecision(3);
+				document.getElementById("dragForce").innerHTML = dragForce.toPrecision(3);
+				
+                if ((y >= 0) && t <= final_time){
+                    timer = window.setTimeout(moveHouse, 1000/30);
+				}
+            }
+        }
+
+        function drawHouse() {
+            theContext.clearRect(0, 0, theCanvas.width, theCanvas.height);
+			
+            var metersPerPixel = Number(slidermaxheight) / (theCanvas.height - 2*buffergraph);
+			var secondsPerPixel = final_time/(theCanvas.width - 2*buffergraph)
+			
+			var pixelX = t/secondsPerPixel + buffergraph;
+			var pixelY = theCanvas.height - y/metersPerPixel - buffergraph;
+            theContext.beginPath();
+            theContext.arc(pixelX, pixelY, 5, 0, 2*Math.PI);
+            theContext.fillStyle = "red";
+            theContext.fill();
+			trailContext.fillRect(pixelX-0.5, pixelY-0.5, 1, 1)
+			
+        }
+	
+		function releaseHouse() {
+			window.clearTimeout(timer);
+			t = 0;
+			y = Number(heightSlider.value);
+			vy = 0;
+			houseMass = Number(massSlider.value)
+			houseMass *= 1000
+			numberBalloons = Number(NSlider.value)
+			moveHouse();
+		}
+	
+		function clearTrails() {
+			trailContext.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
+		}
+		
+		function drawGraph() {
+			
+			
+			graphContext.beginPath();
+			graphContext.moveTo(buffergraph, buffergraph - 10);
+			graphContext.lineTo(buffergraph, (graphCanvas.height - buffergraph));
+			graphContext.lineTo((graphCanvas.width - buffergraph)+10, (graphCanvas.height - buffergraph));
+			graphContext.stroke();
+			
+			graphContext.beginPath();
+			graphContext.moveTo(buffergraph, buffergraph - 20);
+			graphContext.lineTo(buffergraph - 7.5, buffergraph-10);
+			graphContext.lineTo(buffergraph + 7.5, buffergraph-10);
+			graphContext.fill()
+			
+			graphContext.beginPath();
+			graphContext.moveTo((graphCanvas.width - buffergraph)+20, (graphCanvas.height - buffergraph));
+			graphContext.lineTo((graphCanvas.width - buffergraph)+10, (graphCanvas.height - buffergraph) - 7.5);
+			graphContext.lineTo((graphCanvas.width - buffergraph)+10, (graphCanvas.height - buffergraph) + 7.5);
+			graphContext.fill()
+			
+			graphContext.font = "15px Arial"
+			
+			for (i = 0; i < 6; i++) {
+				graphContext.textAlign = 'right'
+				graphContext.fillText(((slidermaxheight)/5 * i)/1000, buffergraph - 10 , graphCanvas.height - buffergraph - (((graphCanvas.width - 2*buffergraph)/5) * i) + 5);
+				graphContext.beginPath();
+				graphContext.moveTo(buffergraph, buffergraph + (((graphCanvas.height - 2*buffergraph)/5) * i));
+				graphContext.lineTo(buffergraph - 5, buffergraph + (((graphCanvas.height - 2*buffergraph)/5) * i));
+				graphContext.stroke();
+			
+				graphContext.textAlign = 'left'
+				graphContext.fillText((final_time/60)/5 * i, buffergraph + (((graphCanvas.width - 2*buffergraph)/5) * i) - 4 , graphCanvas.height - buffergraph + 20);
+				graphContext.beginPath();
+				graphContext.moveTo(buffergraph + (((graphCanvas.width - 2*buffergraph)/5) * i),graphCanvas.height - buffergraph);
+				graphContext.lineTo(buffergraph + (((graphCanvas.width - 2*buffergraph)/5) * i),graphCanvas.height - buffergraph +5);
+				graphContext.stroke();
+			}
+			
+			graphContext.textAlign = 'center'
+			graphContext.fillText("Time (minutes)", graphCanvas.width/2,graphCanvas.height -10);
+			graphContext.save();
+			graphContext.translate(graphCanvas.width, graphCanvas.height);
+			graphContext.rotate(-Math.PI/2);
+			graphContext.fillText("Height (kilometres)", graphCanvas.width/2, -graphCanvas.height + 10);
+			graphContext.restore();
+			
+			
+		
+		
+		}
+	
+	
+  </script>
+
+</body>
+
+</html>
